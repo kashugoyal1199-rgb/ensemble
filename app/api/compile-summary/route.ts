@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { requireUser } from '@/lib/auth'
 import { readJson, validateUrl } from '@/lib/validation'
 
 export async function POST(req: NextRequest) {
+  const auth = await requireUser({ admin: true })
+  if ('error' in auth) return auth.error
   const body = await readJson(req)
   const errors: Record<string, string> = {}
   const list = (key: 'forms' | 'notes') => {

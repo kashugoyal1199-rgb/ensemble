@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useSession } from 'next-auth/react'
 import Link from 'next/link'
 import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react'
 import { Field } from '@/components/ui'
@@ -45,7 +46,12 @@ function validate(f: Form): Partial<Record<keyof Form, string>> {
 }
 
 export default function ReportIssuePage() {
+  const { data: auth } = useSession()
   const [f, setF] = useState<Form>(initial)
+  const sessionName = auth?.user?.name || auth?.user?.email || ''
+  useEffect(() => {
+    if (sessionName) setF(p => (p.reportedBy === sessionName ? p : { ...p, reportedBy: sessionName }))
+  }, [sessionName])
   const [touched, setTouched] = useState<Partial<Record<keyof Form, boolean>>>({})
   const [submitted, setSubmitted] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -94,7 +100,7 @@ export default function ReportIssuePage() {
           <p className="mt-4 text-sm text-slate-600">Reference</p>
           <p className="font-mono text-lg font-semibold">{createdId}</p>
           <div className="mt-6 flex gap-3">
-            <button className="btn-secondary" onClick={() => { setF(initial); setTouched({}); setSubmitted(false); setCreatedId('') }}>
+            <button className="btn-secondary" onClick={() => { setF({ ...initial, reportedBy: sessionName }); setTouched({}); setSubmitted(false); setCreatedId('') }}>
               Report another
             </button>
             <Link href="/" className="btn-primary">
@@ -128,8 +134,8 @@ export default function ReportIssuePage() {
                 </select>
               )}
             </Field>
-            <Field label="Your name *" error={err('reportedBy')}>
-              {p => <input {...p} {...bind('reportedBy')} type="text" autoComplete="name" className="input" />}
+            <Field label="Reporting as" error={err('reportedBy')}>
+              {p => <input {...p} {...bind('reportedBy')} type="text" readOnly className="input" />}
             </Field>
           </div>
           <Field label="Description *" error={err('description')} hint="What happened, and what did you expect?" counter={{ value: f.description.length, max: 5000 }}>

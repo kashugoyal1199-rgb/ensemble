@@ -1,7 +1,19 @@
+'use client'
+
+import { useEffect } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { useSession } from 'next-auth/react'
 import { ArrowLeft } from 'lucide-react'
 
 export function PageShell({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
+  const { status } = useSession()
+  const router = useRouter()
+
+  useEffect(() => {
+    if (status === 'unauthenticated') router.replace('/?error=SessionRequired')
+  }, [status, router])
+
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-40 border-b border-slate-200/80 bg-white/80 backdrop-blur">
@@ -18,7 +30,7 @@ export function PageShell({ title, subtitle, children }: { title: string; subtit
       <main className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
         <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">{title}</h1>
         <p className="mt-1 text-sm text-slate-600">{subtitle}</p>
-        <div className="mt-6">{children}</div>
+        <div className="mt-6">{status === 'authenticated' ? children : <div aria-busy className="h-40" />}</div>
       </main>
     </div>
   )

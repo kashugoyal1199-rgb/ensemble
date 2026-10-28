@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import storage from '@/lib/storage'
+import { requireUser } from '@/lib/auth'
 import { parseIssuePatch, readJson } from '@/lib/validation'
 
 export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireUser({ admin: true })
+  if ('error' in auth) return auth.error
   const issue = storage.getIssueById(params.id)
 
   if (!issue) {
@@ -20,6 +23,8 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireUser({ admin: true })
+  if ('error' in auth) return auth.error
   const parsed = parseIssuePatch(await readJson(req))
   if (!parsed.ok) {
     return NextResponse.json({ error: 'Validation failed', fields: parsed.errors }, { status: 400 })

@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { signOut, useSession } from 'next-auth/react'
 import { LogOut, CalendarDays, CalendarClock, ClipboardList, Settings2 } from 'lucide-react'
 import { Avatar, ConfirmDialog, Toasts, ToastMsg } from '@/components/ui'
 import { Login } from '@/components/Login'
@@ -15,7 +16,6 @@ import {
   hydrate,
   initials,
   isQuestionDataList,
-  isSession,
   mondayQuestions,
   readStorage,
   writeStorage,
@@ -27,8 +27,14 @@ type Section = 'huddle' | 'settings'
 const isString = (v: unknown): v is string => typeof v === 'string'
 
 export default function Ensemble() {
-  const [ready, setReady] = useState(false)
-  const [session, setSession] = useState<Session | null>(null)
+  const { data: auth, status } = useSession()
+  const session: Session | null = useMemo(
+    () =>
+      auth?.user?.email
+        ? { role: auth.user.role, name: auth.user.name || auth.user.email, email: auth.user.email.toLowerCase() }
+        : null,
+    [auth]
+  )
   const [daily, setDaily] = useState<QuestionData[]>(() => hydrate(dailyQuestions, null))
   const [monday, setMonday] = useState<QuestionData[]>(() => hydrate(mondayQuestions, null))
   const [view, setView] = useState<View>('today')
@@ -55,12 +61,9 @@ export default function Ensemble() {
       setSheetId(readStorage(KEYS.sheetId, isString) ?? '')
     }
     load()
-    setSession(readStorage(KEYS.session, isSession))
-    setReady(true)
 
     const onStorage = (e: StorageEvent) => {
-      if (e.key === KEYS.session) setSession(readStorage(KEYS.session, isSession))
-      else if (e.key === null || [KEYS.daily, KEYS.monday, KEYS.feedbackLink, KEYS.apiKey, KEYS.sheetId].includes(e.key as any)) load()
+      if (e.key === null || [KEYS.daily, KEYS.monday, KEYS.feedbackLink, KEYS.apiKey, KEYS.sheetId].includes(e.key as any)) load()
     }
     window.addEventListener('storage', onStorage)
     return () => window.removeEventListener('storage', onStorage)
@@ -76,24 +79,6 @@ export default function Ensemble() {
     },
     [toast]
   )
-
-  const login = useCallback(
-    (s: Session) => {
-      if (!persist(KEYS.session, s)) return
-      setSession(s)
-      setSection('huddle')
-      toast('success', `Welcome, ${s.name.split(' ')[0]}`)
-    },
-    [persist, toast]
-  )
-
-  const logout = () => {
-    try {
-      localStorage.removeItem(KEYS.session)
-    } catch {}
-    setSession(null)
-    setExpanded(null)
-  }
 
   const questions = view === 'today' ? dailyQuestions : mondayQuestions
   const data = view === 'today' ? daily : monday
@@ -114,12 +99,12 @@ export default function Ensemble() {
     return { withTopic, responses, people }
   }, [data])
 
-  if (!ready) return <div className="min-h-screen" aria-busy />
+  if (status === 'loading') return <div className="min-h-screen" aria-busy />
 
   if (!session) {
     return (
       <>
-        <Login onLogin={login} onError={m => toast('error', m)} />
+        <Login />
         <Toasts toasts={toasts} dismiss={dismissToast} />
       </>
     )
@@ -145,7 +130,7 @@ export default function Ensemble() {
               <p className="text-xs leading-tight text-slate-500">{isAdmin ? 'Admin Lead' : 'Team Lead'}</p>
             </div>
             <Avatar name={session.email} initials={initials(session.name)} />
-            <button onClick={logout} className="btn-ghost" aria-label="Sign out" title="Sign out">
+            <button onClick={() => signOut({ callbackUrl: '/' })} className="btn-ghost" aria-label="Sign out" title="Sign out">
               <LogOut size={18} />
             </button>
           </div>

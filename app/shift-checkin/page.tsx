@@ -1,6 +1,7 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useSession } from 'next-auth/react'
 import Link from 'next/link'
 import { AlertTriangle, Check, CheckCircle2, Loader2 } from 'lucide-react'
 import { Field } from '@/components/ui'
@@ -54,7 +55,12 @@ function validate(f: Form): Errs {
 }
 
 export default function ShiftCheckinPage() {
+  const { data: auth } = useSession()
   const [f, setF] = useState<Form>(initial)
+  const sessionName = auth?.user?.name || auth?.user?.email || ''
+  useEffect(() => {
+    if (sessionName) setF(p => (p.tlName === sessionName ? p : { ...p, tlName: sessionName }))
+  }, [sessionName])
   const [step, setStep] = useState(0)
   const [attempted, setAttempted] = useState<Set<number>>(new Set())
   const [touched, setTouched] = useState<Partial<Record<keyof Form, boolean>>>({})
@@ -111,7 +117,7 @@ export default function ShiftCheckinPage() {
             {f.tlName} · {f.shift} shift · {f.date}
           </p>
           <div className="mt-6 flex gap-3">
-            <button className="btn-secondary" onClick={() => { setF({ ...initial, date: today() }); setStep(0); setAttempted(new Set()); setTouched({}); setDone(false) }}>
+            <button className="btn-secondary" onClick={() => { setF({ ...initial, date: today(), tlName: sessionName }); setStep(0); setAttempted(new Set()); setTouched({}); setDone(false) }}>
               New check-in
             </button>
             <Link href="/" className="btn-primary">
@@ -171,7 +177,7 @@ export default function ShiftCheckinPage() {
                 )}
               </Field>
               <Field label="Your name" error={err('tlName')}>
-                {p => <input {...p} {...bind('tlName')} type="text" autoComplete="name" className="input" />}
+                {p => <input {...p} {...bind('tlName')} type="text" readOnly className="input" />}
               </Field>
               <Field label="Team" error={err('team')}>
                 {p => (

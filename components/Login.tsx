@@ -1,83 +1,43 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
-import { ShieldCheck, Users, ArrowRight } from 'lucide-react'
-import { Field } from './ui'
-import { validateEmail, validateName, LIMITS } from '@/lib/validation'
-import { decodeJwtPayload, Role, Session } from '@/lib/huddle'
+import { useEffect, useState } from 'react'
+import { signIn } from 'next-auth/react'
+import { AlertCircle, Loader2 } from 'lucide-react'
 
-const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID
-// Optional comma-separated allowlist. When set, only these emails can enter as Admin Lead.
-const ADMIN_EMAILS = (process.env.NEXT_PUBLIC_ADMIN_EMAILS || '')
-  .split(',')
-  .map(s => s.trim().toLowerCase())
-  .filter(Boolean)
+const ERRORS: Record<string, string> = {
+  unverified: 'Your Google email address is not verified.',
+  domain: 'That account isn’t allowed. Sign in with your work Google account.',
+  AccessDenied: 'That account isn’t allowed. Sign in with your work Google account.',
+  Configuration: 'Sign-in isn’t configured yet. Ask an admin to set the Google credentials.',
+  OAuthCallback: 'Google sign-in was interrupted. Please try again.',
+  OAuthSignin: 'Could not start Google sign-in. Please try again.',
+  OAuthAccountNotLinked: 'That email is already linked to another sign-in method.',
+  Callback: 'Google sign-in failed. Please try again.',
+  SessionRequired: 'Please sign in to continue.',
+}
 
-export function Login({ onLogin, onError }: { onLogin: (s: Session) => void; onError: (msg: string) => void }) {
-  const [role, setRole] = useState<Role>('subordinate')
-  const [name, setName] = useState('')
-  const [email, setEmail] = useState('')
-  const [touched, setTouched] = useState({ name: false, email: false })
-  const [submitted, setSubmitted] = useState(false)
-
-  const nameRes = validateName(name)
-  const emailRes = validateEmail(email)
-  let emailError = !emailRes.ok ? emailRes.error : undefined
-  if (emailRes.ok && role === 'admin' && ADMIN_EMAILS.length && !ADMIN_EMAILS.includes(emailRes.value)) {
-    emailError = 'This email is not authorised as an Admin Lead'
-  }
-  const nameError = !nameRes.ok ? nameRes.error : undefined
-  const show = (f: 'name' | 'email') => touched[f] || submitted
-
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault()
-    setSubmitted(true)
-    if (!nameRes.ok || !emailRes.ok || emailError) return
-    onLogin({ role, name: nameRes.value, email: emailRes.value })
-  }
+export function Login() {
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
 
   useEffect(() => {
-    if (!GOOGLE_CLIENT_ID) return
-    const init = () => {
-      const g = (window as any).google
-      const target = document.getElementById('google-signin-button')
-      if (!g?.accounts?.id || !target) return
-      g.accounts.id.initialize({
-        client_id: GOOGLE_CLIENT_ID,
-        callback: (resp: { credential?: string }) => {
-          const p = resp.credential ? decodeJwtPayload(resp.credential) : null
-          const n = validateName(p?.name ?? '')
-          const em = validateEmail(p?.email ?? '')
-          if (!p || !n.ok || !em.ok || p.email_verified === false) {
-            onError('Google sign-in returned an unusable profile. Try another account or sign in with email.')
-            return
-          }
-          onLogin({ role: 'subordinate', name: n.value, email: em.value })
-        },
-      })
-      g.accounts.id.renderButton(target, { theme: 'outline', size: 'large', width: 320, shape: 'pill' })
+    const code = new URLSearchParams(window.location.search).get('error')
+    if (code) {
+      setError(ERRORS[code] ?? 'Sign-in failed. Please try again.')
+      window.history.replaceState(null, '', window.location.pathname)
     }
-    if ((window as any).google?.accounts?.id) return init()
-    const existing = document.querySelector<HTMLScriptElement>('script[data-gsi]')
-    if (existing) {
-      existing.addEventListener('load', init)
-      return () => existing.removeEventListener('load', init)
-    }
-    const s = document.createElement('script')
-    s.src = 'https://accounts.google.com/gsi/client'
-    s.async = true
-    s.defer = true
-    s.dataset.gsi = '1'
-    s.onload = init
-    s.onerror = () => onError('Could not load Google Sign-In. Check your connection.')
-    document.head.appendChild(s)
-  }, [onLogin, onError])
+  }, [])
 
-  const roles: { id: Role; label: string; icon: React.ReactNode; blurb: string }[] = [
-    { id: 'subordinate', label: 'Team Lead', icon: <Users size={16} />, blurb: 'Read discussion topics and add your responses.' },
-    { id: 'admin', label: 'Admin Lead', icon: <ShieldCheck size={16} />, blurb: 'Set discussion topics, review every response, manage integrations.' },
-  ]
-  const current = roles.find(r => r.id === role)!
+  const start = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      await signIn('google', { callbackUrl: '/' })
+    } catch {
+      setError('Could not reach the sign-in service. Check your connection.')
+      setLoading(false)
+    }
+  }
 
   return (
     <main className="flex min-h-screen items-center justify-center px-4 py-10">
@@ -90,72 +50,31 @@ export function Login({ onLogin, onError }: { onLogin: (s: Session) => void; onE
           <p className="mt-2 text-sm text-slate-600">One place for your team lead huddles.</p>
         </div>
 
-        <form onSubmit={submit} noValidate className="card space-y-5 p-6 sm:p-8">
-          <div role="group" aria-label="Sign in as" className="segmented w-full">
-            {roles.map(r => (
-              <button
-                key={r.id}
-                type="button"
-                aria-pressed={role === r.id}
-                onClick={() => setRole(r.id)}
-                className="segment flex flex-1 items-center justify-center gap-2"
-              >
-                {r.icon} {r.label}
-              </button>
-            ))}
-          </div>
-          <p className="-mt-1 text-center text-xs text-slate-500">{current.blurb}</p>
+        <div className="card space-y-5 p-6 sm:p-8">
+          {error && (
+            <div role="alert" className="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 p-3.5 text-sm text-red-800">
+              <AlertCircle size={16} className="mt-0.5 shrink-0" /> {error}
+            </div>
+          )}
 
-          <Field label="Full name" error={show('name') ? nameError : undefined} counter={{ value: name.length, max: LIMITS.nameMax }}>
-            {p => (
-              <input
-                {...p}
-                type="text"
-                autoComplete="name"
-                value={name}
-                maxLength={LIMITS.nameMax + 20}
-                onChange={e => setName(e.target.value)}
-                onBlur={() => setTouched(t => ({ ...t, name: true }))}
-                placeholder="Jane Doe"
-                className="input"
-              />
+          <button type="button" onClick={start} disabled={loading} className="btn-secondary w-full gap-3 py-3 text-base">
+            {loading ? (
+              <Loader2 size={18} className="animate-spin" />
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden>
+                <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z" />
+                <path fill="#4285F4" d="M46.1 24.5c0-1.6-.1-3.1-.4-4.5H24v9h12.4c-.5 2.9-2.2 5.3-4.6 6.9l7.4 5.7c4.3-4 6.9-9.9 6.9-17.1z" />
+                <path fill="#FBBC05" d="M10.5 28.7c-.5-1.4-.8-2.9-.8-4.7s.3-3.2.8-4.7l-7.9-6.1C.9 16.4 0 20.1 0 24s.9 7.6 2.6 10.8l7.9-6.1z" />
+                <path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.4-5.7c-2.1 1.4-4.9 2.3-8.5 2.3-6.3 0-11.6-4.1-13.5-9.8l-7.9 6.1C6.5 42.6 14.6 48 24 48z" />
+              </svg>
             )}
-          </Field>
-
-          <Field label="Work email" error={show('email') ? emailError : undefined}>
-            {p => (
-              <input
-                {...p}
-                type="email"
-                autoComplete="email"
-                inputMode="email"
-                value={email}
-                onChange={e => setEmail(e.target.value)}
-                onBlur={() => setTouched(t => ({ ...t, email: true }))}
-                placeholder="jane@company.com"
-                className="input"
-              />
-            )}
-          </Field>
-
-          <button type="submit" className="btn-primary w-full py-3">
-            Continue as {current.label} <ArrowRight size={16} />
+            Continue with Google
           </button>
 
-          {GOOGLE_CLIENT_ID && role === 'subordinate' && (
-            <>
-              <div className="relative">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-slate-200" />
-                </div>
-                <div className="relative flex justify-center">
-                  <span className="bg-white px-3 text-xs uppercase tracking-wide text-slate-500">or</span>
-                </div>
-              </div>
-              <div id="google-signin-button" className="flex min-h-[44px] justify-center" />
-            </>
-          )}
-        </form>
+          <p className="text-center text-xs text-slate-500">
+            Use your work Google account. Admin access is granted by your organisation.
+          </p>
+        </div>
       </div>
     </main>
   )
