@@ -1,276 +1,245 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import Link from 'next/link'
+import { AlertTriangle, Check, CheckCircle2, Loader2 } from 'lucide-react'
+import { Field } from '@/components/ui'
+import { PageShell } from '@/components/PageShell'
+import { parseShiftInput } from '@/lib/validation'
+
+const today = () => new Date().toLocaleDateString('en-CA') // YYYY-MM-DD in local time
+
+const initial = {
+  date: today(),
+  shift: 'morning',
+  tlName: '',
+  team: 'default',
+  scheduledCount: '',
+  presentCount: '',
+  capacityNote: '',
+  processChangesShared: false,
+  bugsShared: false,
+  previousIssuesReviewed: false,
+  feedbackRoundCompleted: false,
+  noActionableFeedback: false,
+  handoverNote: '',
+}
+type Form = typeof initial
+type Errs = Partial<Record<keyof Form, string>>
+
+const STEPS = ['Shift details', 'Huddle', 'Handover']
+const STEP_FIELDS: (keyof Form)[][] = [
+  ['date', 'shift', 'tlName', 'team', 'scheduledCount', 'presentCount', 'capacityNote'],
+  ['processChangesShared', 'bugsShared', 'previousIssuesReviewed', 'feedbackRoundCompleted', 'noActionableFeedback'],
+  ['handoverNote'],
+]
+
+const toPayload = (f: Form) => ({
+  ...f,
+  scheduledCount: f.scheduledCount === '' ? NaN : Number(f.scheduledCount),
+  presentCount: f.presentCount === '' ? NaN : Number(f.presentCount),
+})
+
+function validate(f: Form): Errs {
+  const parsed = parseShiftInput(toPayload(f))
+  const errs: Errs = parsed.ok ? {} : { ...(parsed.errors as any) }
+  if (errs.scheduledCount && f.scheduledCount === '') errs.scheduledCount = 'Enter how many were scheduled'
+  if (errs.presentCount && f.presentCount === '') errs.presentCount = 'Enter how many are present'
+  for (const k of ['tlName', 'date', 'shift', 'team'] as const) if (errs[k] === 'Required') errs[k] = 'This field is required'
+  if (f.date > today()) errs.date = 'Date cannot be in the future'
+  if (f.presentCount !== '' && f.scheduledCount !== '' && Number(f.presentCount) < Number(f.scheduledCount) && !f.capacityNote.trim()) {
+    errs.capacityNote = 'Add a note explaining the shortfall'
+  }
+  return errs
+}
 
 export default function ShiftCheckinPage() {
-  const router = useRouter()
-  const [step, setStep] = useState(1)
+  const [f, setF] = useState<Form>(initial)
+  const [step, setStep] = useState(0)
+  const [attempted, setAttempted] = useState<Set<number>>(new Set())
+  const [touched, setTouched] = useState<Partial<Record<keyof Form, boolean>>>({})
   const [loading, setLoading] = useState(false)
-  const [formData, setFormData] = useState({
-    date: new Date().toISOString().split('T')[0],
-    shift: 'morning',
-    tlName: '',
-    team: 'default',
-    scheduledCount: 0,
-    presentCount: 0,
-    capacityNote: '',
-    processChangesShared: false,
-    bugsShared: false,
-    previousIssuesReviewed: false,
-    feedbackRoundCompleted: false,
-    noActionableFeedback: false,
-    handoverNote: '',
+  const [serverError, setServerError] = useState('')
+  const [done, setDone] = useState(false)
+
+  const errors = validate(f)
+  const err = (k: keyof Form) => (touched[k] || STEP_FIELDS.some((fs, i) => fs.includes(k) && attempted.has(i)) ? errors[k] : undefined)
+  const stepHasError = (i: number) => STEP_FIELDS[i].some(k => errors[k])
+
+  const set = <K extends keyof Form>(k: K, v: Form[K]) => setF(p => ({ ...p, [k]: v }))
+  const bind = (k: keyof Form) => ({
+    name: k,
+    value: f[k] as string,
+    onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => set(k, e.target.value as never),
+    onBlur: () => setTouched(t => ({ ...t, [k]: true })),
   })
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-    const { name, value, type } = e.target
-    setFormData(prev => ({
-      ...prev,
-      [name]: type === 'checkbox' ? (e.target as HTMLInputElement).checked : value,
-    }))
-  }
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const lastStep = STEPS.length - 1
+  // "No actionable feedback" skips straight to submit-ready after the huddle step.
+  const next = async (e: React.FormEvent) => {
     e.preventDefault()
-
-    if (step === 1) {
-      setStep(2)
+    setServerError('')
+    setAttempted(s => new Set(s).add(step))
+    if (stepHasError(step)) {
+      setTimeout(() => document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus(), 0)
       return
     }
-
-    if (step === 2 && !formData.noActionableFeedback) {
-      setStep(3)
-      return
-    }
+    if (step < lastStep) return setStep(step + 1)
 
     setLoading(true)
     try {
-      const res = await fetch('/api/shifts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
-      })
-
-      if (res.ok) {
-        router.push('/?success=true')
+      const res = await fetch('/api/shifts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(toPayload(f)) })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setServerError(body?.fields ? Object.values(body.fields).join(' · ') : body?.error || 'Something went wrong. Please try again.')
+        return
       }
+      setDone(true)
+    } catch {
+      setServerError('Network error. Check your connection and try again.')
     } finally {
       setLoading(false)
     }
   }
 
+  if (done) {
+    return (
+      <PageShell title="Check-in submitted" subtitle="Your shift has been recorded.">
+        <div className="card animate-rise flex flex-col items-center p-10 text-center">
+          <CheckCircle2 size={44} className="text-emerald-500" />
+          <p className="mt-4 text-sm text-slate-600">
+            {f.tlName} · {f.shift} shift · {f.date}
+          </p>
+          <div className="mt-6 flex gap-3">
+            <button className="btn-secondary" onClick={() => { setF({ ...initial, date: today() }); setStep(0); setAttempted(new Set()); setTouched({}); setDone(false) }}>
+              New check-in
+            </button>
+            <Link href="/" className="btn-primary">
+              Back to dashboard
+            </Link>
+          </div>
+        </div>
+      </PageShell>
+    )
+  }
+
+  const checks: [keyof Form, string, string][] = [
+    ['processChangesShared', 'Process changes shared', 'New instructions and tool changes were passed on.'],
+    ['bugsShared', 'Bugs shared', 'Known bugs and workarounds were covered.'],
+    ['previousIssuesReviewed', 'Previous issues reviewed', 'Status of open issues was reviewed.'],
+    ['feedbackRoundCompleted', 'Feedback round completed', 'Each Faffer had a chance to give feedback.'],
+  ]
+
   return (
-    <div className="max-w-2xl mx-auto">
-      <h1 className="text-3xl font-bold mb-8">Shift Check-in</h1>
-
-      <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-6 space-y-6">
-        {/* Step 1: Shift Details */}
-        {step === 1 && (
-          <div className="space-y-6">
-            <h2 className="text-xl font-semibold">Step 1: Shift Details</h2>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Date</label>
-                <input
-                  type="date"
-                  name="date"
-                  value={formData.date}
-                  onChange={handleChange}
-                  className="w-full border border-gray-300 rounded px-3 py-2"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Shift</label>
-                <select
-                  name="shift"
-                  value={formData.shift}
-                  onChange={handleChange}
-                  className="w-full border border-gray-300 rounded px-3 py-2"
-                  required
-                >
-                  <option value="morning">Morning</option>
-                  <option value="afternoon">Afternoon</option>
-                  <option value="evening">Evening</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Your Name</label>
-                <input
-                  type="text"
-                  name="tlName"
-                  value={formData.tlName}
-                  onChange={handleChange}
-                  className="w-full border border-gray-300 rounded px-3 py-2"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Team</label>
-                <select
-                  name="team"
-                  value={formData.team}
-                  onChange={handleChange}
-                  className="w-full border border-gray-300 rounded px-3 py-2"
-                  required
-                >
-                  <option value="default">Default Team</option>
-                  <option value="ops">Ops</option>
-                  <option value="tech">Tech</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Scheduled Faffers</label>
-                <input
-                  type="number"
-                  name="scheduledCount"
-                  value={formData.scheduledCount}
-                  onChange={handleChange}
-                  className="w-full border border-gray-300 rounded px-3 py-2"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Present Faffers</label>
-                <input
-                  type="number"
-                  name="presentCount"
-                  value={formData.presentCount}
-                  onChange={handleChange}
-                  className="w-full border border-gray-300 rounded px-3 py-2"
-                  required
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Capacity Note (optional)</label>
-              <textarea
-                name="capacityNote"
-                value={formData.capacityNote}
-                onChange={handleChange}
-                className="w-full border border-gray-300 rounded px-3 py-2"
-                rows={2}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Step 2: Huddle Confirmation */}
-        {step === 2 && (
-          <div className="space-y-6">
-            <h2 className="text-xl font-semibold">Step 2: Huddle Confirmation</h2>
-
-            <div className="space-y-4">
-              <label className="flex items-center">
-                <input
-                  type="checkbox"
-                  name="processChangesShared"
-                  checked={formData.processChangesShared}
-                  onChange={handleChange}
-                  className="w-4 h-4 text-blue-600 rounded border-gray-300"
-                />
-                <span className="ml-3 text-gray-700">Process changes communicated</span>
-              </label>
-
-              <label className="flex items-center">
-                <input
-                  type="checkbox"
-                  name="bugsShared"
-                  checked={formData.bugsShared}
-                  onChange={handleChange}
-                  className="w-4 h-4 text-blue-600 rounded border-gray-300"
-                />
-                <span className="ml-3 text-gray-700">Known bugs and workarounds communicated</span>
-              </label>
-
-              <label className="flex items-center">
-                <input
-                  type="checkbox"
-                  name="previousIssuesReviewed"
-                  checked={formData.previousIssuesReviewed}
-                  onChange={handleChange}
-                  className="w-4 h-4 text-blue-600 rounded border-gray-300"
-                />
-                <span className="ml-3 text-gray-700">Previous unresolved issues reviewed</span>
-              </label>
-
-              <label className="flex items-center">
-                <input
-                  type="checkbox"
-                  name="feedbackRoundCompleted"
-                  checked={formData.feedbackRoundCompleted}
-                  onChange={handleChange}
-                  className="w-4 h-4 text-blue-600 rounded border-gray-300"
-                />
-                <span className="ml-3 text-gray-700">Every Faffer had opportunity to report friction</span>
-              </label>
-            </div>
-
-            <div className="bg-blue-50 border border-blue-200 rounded p-4">
-              <p className="font-medium text-blue-900 mb-3">Did anything need to be recorded today?</p>
-              <div className="space-y-2">
-                <label className="flex items-center">
-                  <input
-                    type="checkbox"
-                    name="noActionableFeedback"
-                    checked={formData.noActionableFeedback}
-                    onChange={handleChange}
-                    className="w-4 h-4 text-blue-600 rounded border-gray-300"
-                  />
-                  <span className="ml-3 text-gray-700">No actionable feedback</span>
-                </label>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Step 3: Handover */}
-        {step === 3 && (
-          <div className="space-y-6">
-            <h2 className="text-xl font-semibold">Step 3: Handover</h2>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">What should the next shift know?</label>
-              <textarea
-                name="handoverNote"
-                value={formData.handoverNote}
-                onChange={handleChange}
-                className="w-full border border-gray-300 rounded px-3 py-2"
-                rows={4}
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Navigation */}
-        <div className="flex gap-4 pt-6 border-t">
-          {step > 1 && (
-            <button
-              type="button"
-              onClick={() => setStep(step - 1)}
-              className="flex-1 bg-gray-200 text-gray-900 py-2 px-4 rounded hover:bg-gray-300"
+    <PageShell title="Shift check-in" subtitle="Three quick steps to close out the huddle.">
+      <ol className="mb-6 flex items-center gap-2" aria-label="Progress">
+        {STEPS.map((s, i) => (
+          <li key={s} className="flex flex-1 items-center gap-2" aria-current={i === step ? 'step' : undefined}>
+            <span
+              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${
+                i < step ? 'bg-indigo-600 text-white' : i === step ? 'bg-indigo-50 text-indigo-700 ring-2 ring-indigo-600' : 'bg-slate-100 text-slate-500'
+              }`}
             >
+              {i < step ? <Check size={14} /> : i + 1}
+            </span>
+            <span className={`hidden text-sm sm:inline ${i === step ? 'font-semibold text-slate-900' : 'text-slate-600'}`}>{s}</span>
+            {i < lastStep && <span className={`h-px flex-1 ${i < step ? 'bg-indigo-600' : 'bg-slate-200'}`} />}
+          </li>
+        ))}
+      </ol>
+
+      <form onSubmit={next} noValidate className="card animate-rise space-y-5 p-6" key={step}>
+        {serverError && (
+          <div role="alert" className="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+            <AlertTriangle size={16} className="mt-0.5 shrink-0" /> {serverError}
+          </div>
+        )}
+
+        {step === 0 && (
+          <>
+            <div className="grid gap-5 sm:grid-cols-2">
+              <Field label="Date" error={err('date')}>
+                {p => <input {...p} {...bind('date')} type="date" max={today()} className="input" />}
+              </Field>
+              <Field label="Shift" error={err('shift')}>
+                {p => (
+                  <select {...p} {...bind('shift')} className="input">
+                    <option value="morning">Morning</option>
+                    <option value="afternoon">Afternoon</option>
+                    <option value="evening">Evening</option>
+                  </select>
+                )}
+              </Field>
+              <Field label="Your name" error={err('tlName')}>
+                {p => <input {...p} {...bind('tlName')} type="text" autoComplete="name" className="input" />}
+              </Field>
+              <Field label="Team" error={err('team')}>
+                {p => (
+                  <select {...p} {...bind('team')} className="input">
+                    <option value="default">Default team</option>
+                    <option value="ops">Ops</option>
+                    <option value="tech">Tech</option>
+                  </select>
+                )}
+              </Field>
+              <Field label="Scheduled Faffers" error={err('scheduledCount')}>
+                {p => <input {...p} {...bind('scheduledCount')} type="number" inputMode="numeric" min={0} max={1000} step={1} className="input" />}
+              </Field>
+              <Field label="Present Faffers" error={err('presentCount')}>
+                {p => <input {...p} {...bind('presentCount')} type="number" inputMode="numeric" min={0} max={1000} step={1} className="input" />}
+              </Field>
+            </div>
+            <Field label="Capacity note (optional)" error={err('capacityNote')} hint="Required if fewer people are present than scheduled." counter={{ value: f.capacityNote.length, max: 1000 }}>
+              {p => <textarea {...p} {...bind('capacityNote')} rows={3} className="input resize-y" />}
+            </Field>
+          </>
+        )}
+
+        {step === 1 && (
+          <>
+            <fieldset className="space-y-3">
+              <legend className="mb-1 text-sm font-medium text-slate-800">What was covered in the huddle?</legend>
+              {checks.map(([k, label, desc]) => (
+                <label key={k} className="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 p-3.5 transition hover:bg-slate-50 has-[:checked]:border-indigo-300 has-[:checked]:bg-indigo-50/50">
+                  <input type="checkbox" checked={f[k] as boolean} onChange={e => set(k, e.target.checked as never)} className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+                  <span>
+                    <span className="block text-sm font-medium text-slate-900">{label}</span>
+                    <span className="block text-xs text-slate-600">{desc}</span>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
+            <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-dashed border-slate-300 p-3.5 transition hover:bg-slate-50">
+              <input type="checkbox" checked={f.noActionableFeedback} onChange={e => set('noActionableFeedback', e.target.checked)} className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+              <span>
+                <span className="block text-sm font-medium text-slate-900">No actionable feedback this shift</span>
+                <span className="block text-xs text-slate-600">Tick if the feedback round produced nothing to follow up on.</span>
+              </span>
+            </label>
+          </>
+        )}
+
+        {step === 2 && (
+          <Field label="What should the next shift know? (optional)" error={err('handoverNote')} counter={{ value: f.handoverNote.length, max: 2000 }}>
+            {p => <textarea {...p} {...bind('handoverNote')} rows={6} placeholder="Open issues, things to watch, who to ping…" className="input resize-y" />}
+          </Field>
+        )}
+
+        <div className="flex items-center justify-between pt-1">
+          {step > 0 ? (
+            <button type="button" className="btn-secondary" onClick={() => setStep(step - 1)}>
               Back
             </button>
+          ) : (
+            <Link href="/" className="btn-secondary">
+              Cancel
+            </Link>
           )}
-          <button
-            type="submit"
-            disabled={loading}
-            className="flex-1 bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 disabled:opacity-50"
-          >
-            {step === 3 ? (loading ? 'Submitting...' : 'Submit Check-in') : 'Next'}
+          <button type="submit" disabled={loading} className="btn-primary min-w-28">
+            {loading ? <><Loader2 size={16} className="animate-spin" /> Submitting…</> : step === lastStep ? 'Submit check-in' : 'Continue'}
           </button>
         </div>
       </form>
-    </div>
+    </PageShell>
   )
 }

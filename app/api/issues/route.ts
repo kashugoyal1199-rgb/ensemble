@@ -1,27 +1,42 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { Issue } from '@/lib/types'
 import storage from '@/lib/storage'
-import { nanoid } from '@/lib/utils'
+import { parseIssueInput, readJson } from '@/lib/validation'
 
 export async function GET() {
   return NextResponse.json(storage.getIssues())
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json()
+  const parsed = parseIssueInput(await readJson(req))
+  if (!parsed.ok) {
+    return NextResponse.json({ error: 'Validation failed', fields: parsed.errors }, { status: 400 })
+  }
+  const d = parsed.data
 
   const issue: Issue = {
     id: `ISS-${Date.now()}`,
     status: 'new',
     reopened: false,
-    ...body,
+    title: d.title!,
+    description: d.description!,
+    category: d.category!,
+    impact: d.impact!,
+    frequency: d.frequency!,
+    urgency: d.urgency!,
+    team: d.team!,
+    reportedBy: d.reportedBy!,
+    exampleTask: d.exampleTask,
+    expectedBehaviour: d.expectedBehaviour,
+    actualBehaviour: d.actualBehaviour,
+    workaround: d.workaround,
+    suggestedOwner: d.suggestedOwner,
+    containmentNote: d.containmentNote,
+    checkInId: d.checkInId,
     reportedAt: new Date().toISOString(),
   }
 
   storage.createIssue(issue)
-
-  // TODO: Send email notification to owner
-  // TODO: Log to Google Forms integration webhook
 
   return NextResponse.json(issue, { status: 201 })
 }

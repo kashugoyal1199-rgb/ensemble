@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import storage from '@/lib/storage'
+import { parseIssuePatch, readJson } from '@/lib/validation'
 
 export async function GET(
   req: NextRequest,
@@ -19,8 +20,11 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const body = await req.json()
-  const issue = storage.updateIssue(params.id, body)
+  const parsed = parseIssuePatch(await readJson(req))
+  if (!parsed.ok) {
+    return NextResponse.json({ error: 'Validation failed', fields: parsed.errors }, { status: 400 })
+  }
+  const issue = storage.updateIssue(params.id, parsed.data)
 
   if (!issue) {
     return NextResponse.json({ error: 'Issue not found' }, { status: 404 })

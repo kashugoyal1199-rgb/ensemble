@@ -1,7 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { readJson, validateUrl } from '@/lib/validation'
 
 export async function POST(req: NextRequest) {
-  const { forms, notes } = await req.json()
+  const body = await readJson(req)
+  const errors: Record<string, string> = {}
+  const list = (key: 'forms' | 'notes') => {
+    const raw = typeof body === 'object' && body ? (body as Record<string, unknown>)[key] : undefined
+    if (raw === undefined) return []
+    if (!Array.isArray(raw) || raw.length > 50) {
+      errors[key] = 'Must be a list of at most 50 items'
+      return []
+    }
+    const out: Array<{ id: string; url: string }> = []
+    for (const item of raw) {
+      const id = typeof item?.id === 'string' ? item.id.slice(0, 100) : ''
+      const url = validateUrl(typeof item?.url === 'string' ? item.url : '')
+      if (!id || !url.ok) {
+        errors[key] = 'Each item needs an id and a valid https link'
+        break
+      }
+      out.push({ id, url: url.value })
+    }
+    return out
+  }
+  const forms = list('forms')
+  const notes = list('notes')
+  if (Object.keys(errors).length) {
+    return NextResponse.json({ error: 'Validation failed', fields: errors }, { status: 400 })
+  }
 
   // TODO: In production, fetch actual data from:
   // 1. Google Forms API (forms.google.com/responses)

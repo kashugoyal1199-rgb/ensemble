@@ -1,301 +1,210 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { AlertCircle } from 'lucide-react'
+import Link from 'next/link'
+import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react'
+import { Field } from '@/components/ui'
+import { PageShell } from '@/components/PageShell'
+import { parseIssueInput } from '@/lib/validation'
+
+const initial = {
+  title: '',
+  category: 'product',
+  description: '',
+  exampleTask: '',
+  expectedBehaviour: '',
+  actualBehaviour: '',
+  impact: 'delayed',
+  frequency: 'first_time',
+  workaround: '',
+  suggestedOwner: '',
+  urgency: 'weekly_review',
+  containmentNote: '',
+  reportedBy: '',
+  team: 'default',
+}
+type Form = typeof initial
+
+const opts = {
+  category: [['product', 'Product'], ['experience', 'Experience'], ['process', 'Process'], ['training', 'Training'], ['qa', 'QA'], ['customer', 'Customer'], ['other', 'Other']],
+  impact: [['blocked', 'Blocked task'], ['delayed', 'Delayed task'], ['extra_effort', 'Extra effort or repeated work'], ['customer_impact', 'Customer impact'], ['safety_risk', 'Safety, privacy, payment, or fraud risk'], ['workable', 'Confusing but workable']],
+  frequency: [['first_time', 'First time'], ['same_faffer', 'Repeated by the same Faffer'], ['multiple_faffers', 'Affecting multiple Faffers'], ['recurring', 'Recurring across shifts']],
+  urgency: [['immediate', 'Immediate (needs urgent escalation)'], ['same_day', 'Same day'], ['weekly_review', 'Weekly review']],
+  owner: [['', 'Not sure'], ['product', 'Product'], ['engineering', 'Engineering'], ['ops', 'Ops'], ['qa', 'QA'], ['training', 'Training']],
+} as const
+
+function validate(f: Form): Partial<Record<keyof Form, string>> {
+  const parsed = parseIssueInput(f)
+  const errs: Partial<Record<keyof Form, string>> = parsed.ok ? {} : { ...(parsed.errors as any) }
+  const norm = (m: string | undefined) => (m === 'Required' ? 'This field is required' : m)
+  for (const k of Object.keys(errs) as (keyof Form)[]) errs[k] = norm(errs[k])
+  if (f.urgency === 'immediate' && !f.containmentNote.trim()) {
+    errs.containmentNote = 'Describe how you are containing this while it is urgent'
+  }
+  return errs
+}
 
 export default function ReportIssuePage() {
-  const router = useRouter()
+  const [f, setF] = useState<Form>(initial)
+  const [touched, setTouched] = useState<Partial<Record<keyof Form, boolean>>>({})
+  const [submitted, setSubmitted] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [formData, setFormData] = useState({
-    title: '',
-    category: 'product',
-    description: '',
-    exampleTask: '',
-    expectedBehaviour: '',
-    actualBehaviour: '',
-    impact: 'delayed',
-    frequency: 'first_time',
-    workaround: '',
-    suggestedOwner: '',
-    urgency: 'weekly_review',
-    containmentNote: '',
-    reportedBy: '',
-    team: 'default',
+  const [serverError, setServerError] = useState('')
+  const [createdId, setCreatedId] = useState('')
+
+  const errors = validate(f)
+  const err = (k: keyof Form) => (touched[k] || submitted ? errors[k] : undefined)
+
+  const bind = (k: keyof Form) => ({
+    name: k,
+    value: f[k],
+    onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => setF(p => ({ ...p, [k]: e.target.value })),
+    onBlur: () => setTouched(t => ({ ...t, [k]: true })),
   })
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
-    const { name, value } = e.target
-    setFormData(prev => ({
-      ...prev,
-      [name]: value,
-    }))
-  }
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault()
+    setSubmitted(true)
+    setServerError('')
+    if (Object.keys(errors).length) {
+      document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus()
+      return
+    }
     setLoading(true)
-
     try {
-      const res = await fetch('/api/issues', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
-      })
-
-      if (res.ok) {
-        const issue = await res.json()
-        router.push(`/?success=true&issueId=${issue.id}`)
+      const res = await fetch('/api/issues', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(f) })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setServerError(body?.fields ? Object.values(body.fields).join(' · ') : body?.error || 'Something went wrong. Please try again.')
+        return
       }
+      setCreatedId(body.id)
+    } catch {
+      setServerError('Network error. Check your connection and try again.')
     } finally {
       setLoading(false)
     }
   }
 
-  const showContainmentNote = formData.urgency === 'immediate'
+  if (createdId) {
+    return (
+      <PageShell title="Issue reported" subtitle="Thanks — it’s been logged.">
+        <div className="card animate-rise flex flex-col items-center p-10 text-center">
+          <CheckCircle2 size={44} className="text-emerald-500" />
+          <p className="mt-4 text-sm text-slate-600">Reference</p>
+          <p className="font-mono text-lg font-semibold">{createdId}</p>
+          <div className="mt-6 flex gap-3">
+            <button className="btn-secondary" onClick={() => { setF(initial); setTouched({}); setSubmitted(false); setCreatedId('') }}>
+              Report another
+            </button>
+            <Link href="/" className="btn-primary">
+              Back to dashboard
+            </Link>
+          </div>
+        </div>
+      </PageShell>
+    )
+  }
 
   return (
-    <div className="max-w-2xl mx-auto">
-      <h1 className="text-3xl font-bold mb-8">Report a New Issue</h1>
-
-      {showContainmentNote && (
-        <div className="mb-6 bg-red-50 border border-red-200 rounded p-4 flex gap-3">
-          <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="font-semibold text-red-900">Immediate Issue Flagged</p>
-            <p className="text-sm text-red-800 mt-1">
-              Send this to the responsible Ops/Product owner now. The tracker does not replace urgent escalation.
-            </p>
-          </div>
-        </div>
-      )}
-
-      <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow p-6 space-y-6">
-        {/* Required Fields */}
-        <div className="border-b pb-6">
-          <h2 className="text-lg font-semibold mb-4">Required Information</h2>
-
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Short Title *
-              </label>
-              <input
-                type="text"
-                name="title"
-                value={formData.title}
-                onChange={handleChange}
-                required
-                className="w-full border border-gray-300 rounded px-3 py-2"
-                placeholder="e.g., Task marked in progress after completion"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Category *</label>
-                <select
-                  name="category"
-                  value={formData.category}
-                  onChange={handleChange}
-                  required
-                  className="w-full border border-gray-300 rounded px-3 py-2"
-                >
-                  <option value="product">Product</option>
-                  <option value="experience">Experience</option>
-                  <option value="process">Process</option>
-                  <option value="training">Training</option>
-                  <option value="qa">QA</option>
-                  <option value="customer">Customer</option>
-                  <option value="other">Other</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Your Name *</label>
-                <input
-                  type="text"
-                  name="reportedBy"
-                  value={formData.reportedBy}
-                  onChange={handleChange}
-                  required
-                  className="w-full border border-gray-300 rounded px-3 py-2"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                What Happened? *
-              </label>
-              <textarea
-                name="description"
-                value={formData.description}
-                onChange={handleChange}
-                required
-                className="w-full border border-gray-300 rounded px-3 py-2"
-                rows={3}
-                placeholder="Describe the issue clearly"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Impact *</label>
-                <select
-                  name="impact"
-                  value={formData.impact}
-                  onChange={handleChange}
-                  required
-                  className="w-full border border-gray-300 rounded px-3 py-2"
-                >
-                  <option value="blocked">Blocked task</option>
-                  <option value="delayed">Delayed task</option>
-                  <option value="extra_effort">Extra effort or repeated work</option>
-                  <option value="customer_impact">Customer impact</option>
-                  <option value="safety_risk">Safety, privacy, payment, or fraud risk</option>
-                  <option value="workable">Confusing but workable</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Frequency *</label>
-                <select
-                  name="frequency"
-                  value={formData.frequency}
-                  onChange={handleChange}
-                  required
-                  className="w-full border border-gray-300 rounded px-3 py-2"
-                >
-                  <option value="first_time">First time</option>
-                  <option value="same_faffer">Repeated by the same Faffer</option>
-                  <option value="multiple_faffers">Affecting multiple Faffers</option>
-                  <option value="recurring">Recurring across shifts</option>
-                </select>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Urgency *</label>
-              <select
-                name="urgency"
-                value={formData.urgency}
-                onChange={handleChange}
-                required
-                className="w-full border border-gray-300 rounded px-3 py-2"
-              >
-                <option value="immediate">Immediate (needs urgent escalation)</option>
-                <option value="same_day">Same day</option>
-                <option value="weekly_review">Weekly review</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        {/* Containment Note for Immediate Issues */}
-        {showContainmentNote && (
-          <div className="border-b pb-6">
-            <h2 className="text-lg font-semibold mb-4">Containment Details</h2>
-            <textarea
-              name="containmentNote"
-              value={formData.containmentNote}
-              onChange={handleChange}
-              className="w-full border border-gray-300 rounded px-3 py-2"
-              rows={3}
-              placeholder="What is affected? How many people? What is the risk? What immediate action was taken?"
-              required={showContainmentNote}
-            />
+    <PageShell title="Report an issue" subtitle="Tell us what’s getting in the way. Fields marked * are required.">
+      <form onSubmit={submit} noValidate className="space-y-6">
+        {serverError && (
+          <div role="alert" className="flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+            <AlertTriangle size={16} className="mt-0.5 shrink-0" /> {serverError}
           </div>
         )}
 
-        {/* Optional Fields */}
-        <div>
-          <h2 className="text-lg font-semibold mb-4">Additional Details (Optional)</h2>
-
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Example Task ID or Link</label>
-              <input
-                type="text"
-                name="exampleTask"
-                value={formData.exampleTask}
-                onChange={handleChange}
-                className="w-full border border-gray-300 rounded px-3 py-2"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Expected Behaviour</label>
-                <textarea
-                  name="expectedBehaviour"
-                  value={formData.expectedBehaviour}
-                  onChange={handleChange}
-                  className="w-full border border-gray-300 rounded px-3 py-2"
-                  rows={2}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Actual Behaviour</label>
-                <textarea
-                  name="actualBehaviour"
-                  value={formData.actualBehaviour}
-                  onChange={handleChange}
-                  className="w-full border border-gray-300 rounded px-3 py-2"
-                  rows={2}
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Immediate Workaround</label>
-              <textarea
-                name="workaround"
-                value={formData.workaround}
-                onChange={handleChange}
-                className="w-full border border-gray-300 rounded px-3 py-2"
-                rows={2}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Suggested Owner</label>
-              <select
-                name="suggestedOwner"
-                value={formData.suggestedOwner}
-                onChange={handleChange}
-                className="w-full border border-gray-300 rounded px-3 py-2"
-              >
-                <option value="">Select owner...</option>
-                <option value="product">Product</option>
-                <option value="engineering">Engineering</option>
-                <option value="ops">Ops</option>
-                <option value="qa">QA</option>
-                <option value="training">Training</option>
-              </select>
-            </div>
+        <section className="card space-y-5 p-6">
+          <h2 className="text-base font-semibold">The basics</h2>
+          <Field label="Title *" error={err('title')} counter={{ value: f.title.length, max: 120 }}>
+            {p => <input {...p} {...bind('title')} type="text" placeholder="Short summary of the problem" className="input" />}
+          </Field>
+          <div className="grid gap-5 sm:grid-cols-2">
+            <Field label="Category *" error={err('category')}>
+              {p => (
+                <select {...p} {...bind('category')} className="input">
+                  {opts.category.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+              )}
+            </Field>
+            <Field label="Your name *" error={err('reportedBy')}>
+              {p => <input {...p} {...bind('reportedBy')} type="text" autoComplete="name" className="input" />}
+            </Field>
           </div>
-        </div>
+          <Field label="Description *" error={err('description')} hint="What happened, and what did you expect?" counter={{ value: f.description.length, max: 5000 }}>
+            {p => <textarea {...p} {...bind('description')} rows={4} className="input resize-y" />}
+          </Field>
+        </section>
 
-        {/* Submit */}
-        <div className="flex gap-4 pt-6 border-t">
-          <button
-            type="button"
-            onClick={() => router.back()}
-            className="flex-1 bg-gray-200 text-gray-900 py-2 px-4 rounded hover:bg-gray-300"
-          >
+        <section className="card space-y-5 p-6">
+          <h2 className="text-base font-semibold">Severity</h2>
+          <div className="grid gap-5 sm:grid-cols-2">
+            <Field label="Impact *" error={err('impact')}>
+              {p => (
+                <select {...p} {...bind('impact')} className="input">
+                  {opts.impact.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+              )}
+            </Field>
+            <Field label="Frequency *" error={err('frequency')}>
+              {p => (
+                <select {...p} {...bind('frequency')} className="input">
+                  {opts.frequency.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+              )}
+            </Field>
+          </div>
+          <Field label="Urgency *" error={err('urgency')}>
+            {p => (
+              <select {...p} {...bind('urgency')} className="input">
+                {opts.urgency.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+            )}
+          </Field>
+          {f.urgency === 'immediate' && (
+            <Field label="Containment *" error={err('containmentNote')} hint="What is being done right now to limit the damage?" counter={{ value: f.containmentNote.length, max: 1000 }}>
+              {p => <textarea {...p} {...bind('containmentNote')} rows={3} className="input resize-y" />}
+            </Field>
+          )}
+        </section>
+
+        <section className="card space-y-5 p-6">
+          <h2 className="text-base font-semibold">
+            More detail <span className="font-normal text-slate-500">(optional)</span>
+          </h2>
+          <Field label="Example task ID or link" error={err('exampleTask')}>
+            {p => <input {...p} {...bind('exampleTask')} type="text" className="input" />}
+          </Field>
+          <div className="grid gap-5 sm:grid-cols-2">
+            <Field label="Expected behaviour" error={err('expectedBehaviour')} counter={{ value: f.expectedBehaviour.length, max: 1000 }}>
+              {p => <textarea {...p} {...bind('expectedBehaviour')} rows={3} className="input resize-y" />}
+            </Field>
+            <Field label="Actual behaviour" error={err('actualBehaviour')} counter={{ value: f.actualBehaviour.length, max: 1000 }}>
+              {p => <textarea {...p} {...bind('actualBehaviour')} rows={3} className="input resize-y" />}
+            </Field>
+          </div>
+          <Field label="Immediate workaround" error={err('workaround')} counter={{ value: f.workaround.length, max: 1000 }}>
+            {p => <textarea {...p} {...bind('workaround')} rows={2} className="input resize-y" />}
+          </Field>
+          <Field label="Suggested owner" error={err('suggestedOwner')}>
+            {p => (
+              <select {...p} {...bind('suggestedOwner')} className="input">
+                {opts.owner.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+            )}
+          </Field>
+        </section>
+
+        <div className="flex justify-end gap-3">
+          <Link href="/" className="btn-secondary">
             Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={loading}
-            className="flex-1 bg-green-600 text-white py-2 px-4 rounded hover:bg-green-700 disabled:opacity-50"
-          >
-            {loading ? 'Submitting...' : 'Report Issue'}
+          </Link>
+          <button type="submit" disabled={loading} className="btn-primary min-w-32">
+            {loading ? <><Loader2 size={16} className="animate-spin" /> Submitting…</> : 'Submit issue'}
           </button>
         </div>
       </form>
-    </div>
+    </PageShell>
   )
 }
