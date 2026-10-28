@@ -1,0 +1,49 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  background: linear-gradient(135deg, #f8fafc 0%, #ffffff 50%, #f1f5f9 100%);
+  @apply text-slate-900;
+}
+
+@layer components {
+  .card-clean {
+    @apply rounded-2xl border border-slate-100 bg-white shadow-sm hover:shadow-lg transition-all duration-300;
+  }
+
+  .btn-primary {
+    @apply px-6 py-3 rounded-lg font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-all duration-200 shadow-sm hover:shadow-md active:scale-95;
+  }
+
+  .btn-secondary {
+    @apply px-6 py-3 rounded-lg font-medium bg-slate-50 text-slate-700 hover:bg-slate-100 transition-colors duration-200 border border-slate-200;
+  }
+
+  .input-clean {
+    @apply w-full px-4 py-3 rounded-lg border border-slate-200 bg-white placeholder:text-slate-400 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 focus:outline-none transition-all duration-200;
+  }
+
+  .text-muted {
+    @apply text-slate-600;
+  }
+
+  .text-subtle {
+    @apply text-slate-500;
+  }
+
+  .tab-button {
+    @apply px-4 py-2 rounded-lg font-medium transition-all duration-200 border;
+  }
+
+  .tab-button.active {
+    @apply bg-blue-600 text-white border-blue-600;
+  }
+
+  .tab-button.inactive {
+    @apply bg-transparent text-slate-600 border-transparent hover:bg-slate-100;
+  }
+}
